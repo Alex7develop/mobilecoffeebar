@@ -4,9 +4,10 @@ import { toggleCalc } from '../store/slices/uiSlice';
 import { setGuests, setHours, setEventDate, setEventType, setCity, toggleMilk, setOptDrink, setOptFunctional, setOptStandCustom, setOptMasterclass, setOptMoreMilks, setResult, hideResult } from '../store/slices/calcSlice';
 import type { RootState } from '../store';
 import { useRef, useEffect, useState } from 'react';
-import { Phone, Send, X } from 'lucide-react';
+import { Phone, Send, X, FileDown } from 'lucide-react';
 import { t, tx } from '../app/i18n';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { createPdfHtml } from './PdfQuoteDocument';
 
 function useBarista(guests: number, hours: number) {
   return Math.min(2, Math.max(1, Math.ceil((guests * 0.75) / (20 * hours))));
@@ -57,6 +58,99 @@ export function CalculatorSection() {
   ];
   const [modalOpen, setModalOpen] = useState(false);
   const [signatureSelected, setSignatureSelected] = useState<string[]>([]);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [showCardOnMobile, setShowCardOnMobile] = useState(false);
+
+  useEffect(() => {
+    if (modalOpen && calc.resultVisible && !isMobile) {
+      import('html2pdf.js');
+    }
+  }, [modalOpen, calc.resultVisible, isMobile]);
+
+  useEffect(() => {
+    if (!modalOpen) setShowCardOnMobile(false);
+  }, [modalOpen]);
+
+  const handleDownloadPdf = async () => {
+    if (isMobile) {
+      setShowCardOnMobile(true);
+      return;
+    }
+    setPdfLoading(true);
+    let wrapper: HTMLDivElement | null = null;
+    try {
+      const html = createPdfHtml({
+        recommendedPackage: calc.recommendedPackage,
+        guests: calc.guests,
+        hours: calc.hours,
+        barista,
+        eventDate: calc.eventDate,
+        eventType: calc.eventType,
+        city: calc.city,
+        selectedMilk: calc.selectedMilk,
+        signatureSelected,
+        optDrink: calc.optDrink,
+        optFunctional: calc.optFunctional,
+        optStandCustom: calc.optStandCustom,
+        optMasterclass: calc.optMasterclass,
+        optMoreMilks: calc.optMoreMilks,
+      });
+      wrapper = document.createElement('div');
+      wrapper.innerHTML = html;
+      wrapper.style.cssText = 'position:fixed;left:0;top:0;width:420px;z-index:1;pointer-events:none;';
+      document.body.appendChild(wrapper);
+
+      const el = (wrapper.firstElementChild ?? wrapper) as HTMLElement;
+      await new Promise((r) => setTimeout(r, 100));
+
+      const { default: html2pdf } = await import('html2pdf.js');
+      const blob = await html2pdf().set({
+        margin: 8,
+        filename: `NEO-${calc.recommendedPackage}-${calc.eventDate}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          onclone: (_clonedDoc: Document, clonedEl: HTMLElement) => {
+            clonedEl.style.opacity = '1';
+            clonedEl.style.visibility = 'visible';
+          },
+        },
+        jsPDF: { unit: 'mm', format: 'a5', orientation: 'portrait' },
+      }).from(el).outputPdf('blob');
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `NEO-${calc.recommendedPackage}-${calc.eventDate}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+    } finally {
+      if (wrapper?.parentNode) document.body.removeChild(wrapper);
+      setPdfLoading(false);
+    }
+  };
+
+  const cardHtml = createPdfHtml({
+    recommendedPackage: calc.recommendedPackage,
+    guests: calc.guests,
+    hours: calc.hours,
+    barista,
+    eventDate: calc.eventDate,
+    eventType: calc.eventType,
+    city: calc.city,
+    selectedMilk: calc.selectedMilk,
+    signatureSelected,
+    optDrink: calc.optDrink,
+    optFunctional: calc.optFunctional,
+    optStandCustom: calc.optStandCustom,
+    optMasterclass: calc.optMasterclass,
+    optMoreMilks: calc.optMoreMilks,
+    mobile: isMobile,
+  });
 
   const doCalculate = () => {
     const g = calc.guests;
@@ -129,7 +223,7 @@ export function CalculatorSection() {
             <p style={{ fontSize: 11, letterSpacing: '.4em', textTransform: 'uppercase', color: 'var(--orange)', marginBottom: 6, fontWeight: 500, alignSelf: 'flex-start' }}>
               {tx(c.overline, lang)}
             </p>
-            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: isMobile ? 'clamp(24px, 7vw, 36px)' : 'clamp(32px,3.5vw,56px)', fontWeight: 300, color: 'var(--graphite)', lineHeight: 1 }}>
+            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: isMobile ? 'clamp(20px, 5.5vw, 28px)' : 'clamp(32px,3.5vw,56px)', fontWeight: 300, color: 'var(--graphite)', lineHeight: 1.15 }}>
               {tx(c.heading1, lang)}<em style={{ color: 'var(--orange)', fontStyle: 'italic' }}>{tx(c.heading2, lang)}</em>
             </div>
           </div>
@@ -401,6 +495,8 @@ export function CalculatorSection() {
               background: 'var(--white)',
               maxWidth: isMobile ? '100%' : 560,
               width: '100%',
+              maxHeight: isMobile && showCardOnMobile ? '85vh' : undefined,
+              overflowY: isMobile && showCardOnMobile ? 'auto' : undefined,
               padding: isMobile ? '36px 24px 32px' : '52px 52px 44px',
               position: 'relative',
             }}
@@ -414,27 +510,68 @@ export function CalculatorSection() {
               <X size={20} strokeWidth={1.5} />
             </button>
 
-            {/* Оверлайн */}
-            <p style={{ fontSize: 10, letterSpacing: '.4em', textTransform: 'uppercase', color: 'var(--orange)', marginBottom: 12, fontWeight: 500 }}>
-              {tx(c.resultLabel, lang)}
-            </p>
+            {/* Верхняя часть — скрываем на мобильном, когда показана открытка */}
+            {!(isMobile && showCardOnMobile) && (
+              <>
+                <p style={{ fontSize: 10, letterSpacing: '.4em', textTransform: 'uppercase', color: 'var(--orange)', marginBottom: 12, fontWeight: 500 }}>
+                  {tx(c.resultLabel, lang)}
+                </p>
+                <div style={{ marginBottom: 28 }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: isMobile ? 38 : 52, fontWeight: 300, color: 'var(--graphite)', lineHeight: 1, marginBottom: 4 }}>
+                    {calc.recommendedPackage}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--graphite-muted)', letterSpacing: '.12em', fontWeight: 300 }}>
+                    {calc.guests} {lang === 'ru' ? 'гостей' : 'guests'} · {calc.hours} {lang === 'ru' ? 'ч' : 'h'} · {barista} {tx(c.baristaUnit, lang)}
+                  </div>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--graphite-muted)', lineHeight: 1.9, marginBottom: 20, fontWeight: 300 }}>
+                  {lang === 'ru'
+                    ? 'Финальная стоимость подтверждается после брифинга. Свяжитесь с нами — обсудим детали вашего события.'
+                    : 'Final cost confirmed after briefing. Contact us to discuss your event details.'}
+                </p>
+              </>
+            )}
 
-            {/* Рекомендуемый пакет */}
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: isMobile ? 38 : 52, fontWeight: 300, color: 'var(--graphite)', lineHeight: 1, marginBottom: 4 }}>
-                {calc.recommendedPackage}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--graphite-muted)', letterSpacing: '.12em', fontWeight: 300 }}>
-                {calc.guests} {lang === 'ru' ? 'гостей' : 'guests'} · {calc.hours} {lang === 'ru' ? 'ч' : 'h'} · {barista} {tx(c.baristaUnit, lang)}
-              </div>
-            </div>
+            {/* PDF (десктоп) / Ваша конфигурация (мобильный) — скрываем кнопку когда открытка уже показана */}
+            {(!isMobile || !showCardOnMobile) && (
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={!isMobile && pdfLoading}
+                style={{
+                  width: '100%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                  padding: '14px 20px',
+                  marginBottom: 20,
+                  border: '1px solid var(--graphite-line)',
+                  background: 'transparent',
+                  color: 'var(--graphite)',
+                  fontFamily: 'Montserrat',
+                  fontSize: 10, letterSpacing: '.28em', textTransform: 'uppercase', fontWeight: 500,
+                  cursor: (!isMobile && pdfLoading) ? 'wait' : 'pointer',
+                  transition: 'background .25s, color .25s, border-color .25s',
+                }}
+                onMouseEnter={e => { if (!pdfLoading) { (e.currentTarget as HTMLButtonElement).style.background = 'var(--off-white)'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--orange)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--orange)'; } }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--graphite-line)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--graphite)'; }}
+              >
+                <FileDown size={14} strokeWidth={1.5} />
+                <span>
+                  {!isMobile && pdfLoading
+                    ? (lang === 'ru' ? 'Формируем…' : 'Generating…')
+                    : isMobile
+                      ? (lang === 'ru' ? 'Ваша конфигурация' : 'Your configuration')
+                      : (lang === 'ru' ? 'Скачать PDF' : 'Download PDF')}
+                </span>
+              </button>
+            )}
 
-            {/* Примечание */}
-            <p style={{ fontSize: 11, color: 'var(--graphite-muted)', lineHeight: 1.9, marginBottom: 28, fontWeight: 300 }}>
-              {lang === 'ru'
-                ? 'Финальная стоимость подтверждается после брифинга. Свяжитесь с нами — обсудим детали вашего события.'
-                : 'Final cost confirmed after briefing. Contact us to discuss your event details.'}
-            </p>
+            {/* HTML-открытка на мобильном — сразу после нажатия «Ваша конфигурация» */}
+            {isMobile && showCardOnMobile && (
+              <div
+                style={{ marginTop: 0, marginBottom: 20, maxWidth: '100%' }}
+                dangerouslySetInnerHTML={{ __html: cardHtml }}
+              />
+            )}
 
             {/* Кнопки */}
             <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 10 }}>
@@ -475,6 +612,7 @@ export function CalculatorSection() {
         </div>,
         document.body
       )}
+
     </section>
   );
 }
